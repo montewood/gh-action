@@ -29,7 +29,7 @@ jobs:
 
       - name: 결과 파일 커밋 및 푸시
         run: |
-          OUTPUT_FILE=$(ls -t output_* | head -n1)
+          OUTPUT_FILE=$(ls -t ./output/output_* 2>/dev/null | head -n1 || true)
           if [ -n "$OUTPUT_FILE" ]; then
             git add "$OUTPUT_FILE"
             git commit -m "Add output file: $OUTPUT_FILE [skip ci]"
