@@ -1,0 +1,39 @@
+name: Run R Script Hourly
+
+on:
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch:
+
+jobs:
+  run_rscript:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 저장소 체크아웃
+        uses: actions/checkout@v3
+
+      - name: GitHub Container Registry 로그인
+        run: echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: R 스크립트 실행 (Docker 컨테이너 내에서)
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}/output:/output \
+            ghcr.io/${{ github.repository_owner }}/batch-task:test
+
+      - name: Git 설정
+        run: |
+          git config --global user.name "montewood"
+          git config --global user.email "benefitgaia377@github.com"
+
+      - name: 결과 파일 커밋 및 푸시
+        run: |
+          OUTPUT_FILE=$(ls -t output_* | head -n1)
+          if [ -n "$OUTPUT_FILE" ]; then
+            git add "$OUTPUT_FILE"
+            git commit -m "Add output file: $OUTPUT_FILE [skip ci]"
+            git push origin HEAD:main
+          else
+            echo "새로운 출력 파일이 없습니다."
+          fi
