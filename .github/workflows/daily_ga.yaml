@@ -35,8 +35,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.R_LIBS_USER }}
-          key: r-4.4.2-ga-${{ hashFiles('renv.lock') }}
-          restore-keys: r-4.4.2-ga-
+          key: r-4.4.2-httr-v1-${{ hashFiles('renv.lock') }}
+          restore-keys: r-4.4.2-httr-v1-
 
       - name: Install system dependencies
         run: sudo apt-get install -y libcurl4-openssl-dev libuv1-dev libssl-dev libfontconfig1-dev
