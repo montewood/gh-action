@@ -1,76 +1,80 @@
-library(googleAnalyticsR)
+library(httr)
 library(jsonlite)
 library(dplyr)
-library(gargle)
 
 # --- 인증 ---
-# YAML auth step에서 WIF access_token을 직접 발급 -> GCP_ACCESS_TOKEN env var로 전달
-# httr Token2.0 객체로 래핑하여 googleAuthR에 주입 (non-interactive 환경에서 유일하게 신뢰할 수 있는 방법)
+# YAML auth step(token_format: access_token)이 GCP_ACCESS_TOKEN env var로 전달
+# googleAuthR/googleAnalyticsR을 사용하지 않고 GA4 Data API를 직접 호출
 access_token <- Sys.getenv("GCP_ACCESS_TOKEN")
 if (nchar(access_token) == 0) stop("GCP_ACCESS_TOKEN env var not set")
 
-tok <- httr::Token2.0$new(
-  app         = httr::oauth_app("google", key = "na", secret = "na"),
-  endpoint    = httr::oauth_endpoints("google"),
-  credentials = list(access_token = access_token, token_type = "Bearer"),
-  params      = list(as_header = TRUE,
-                     scope = "https://www.googleapis.com/auth/analytics.readonly"),
-  cache_path  = FALSE
-)
-googleAuthR::gar_auth(token = tok)
-
 # --- 설정 ---
-property_id <- 267577482          # assets/email_account 2번째 줄
-target_date <- Sys.Date() - 1    # 어제 날짜 기준 수집
-
+property_id <- 267577482
+target_date <- Sys.Date() - 1
 date_str    <- format(target_date, "%Y%m%d")
 output_path <- file.path("output", paste0("GA-", date_str, ".json"))
 
 message("Collecting GA4 data for: ", target_date)
 
-# --- GA4 데이터 조회 ---
-raw <- ga_data(
-  property_id,
-  date_range = c(as.character(target_date), as.character(target_date)),
-  metrics    = "activeUsers",
-  dimensions = "dateHourMinute",
-  limit      = -1
+# --- GA4 Data API v1beta runReport ---
+body <- list(
+  dateRanges = list(list(startDate = as.character(target_date),
+                         endDate   = as.character(target_date))),
+  metrics    = list(list(name = "activeUsers")),
+  dimensions = list(list(name = "dateHourMinute")),
+  limit      = 100000
 )
 
-if (nrow(raw) == 0) {
+resp <- POST(
+  paste0("https://analyticsdata.googleapis.com/v1beta/properties/",
+         property_id, ":runReport"),
+  add_headers(Authorization = paste("Bearer", access_token)),
+  content_type_json(),
+  body = toJSON(body, auto_unbox = TRUE)
+)
+
+if (http_error(resp)) {
+  stop("GA4 API error: ", content(resp, "text", encoding = "UTF-8"))
+}
+
+data <- content(resp, "parsed", encoding = "UTF-8")
+
+if (is.null(data$rows) || length(data$rows) == 0) {
   message("No data returned for ", target_date, ". Writing empty array.")
+  dir.create("output", showWarnings = FALSE)
   write(toJSON(list(), auto_unbox = FALSE), output_path)
   quit(status = 0)
 }
 
-# --- dateHourMinute 파싱 (기존 output 스키마 유지) ---
-# dateHourMinute 형식: YYYYMMDDHHmm (12자리)
+# --- 응답 파싱 ---
+rows <- data$rows
 wday_labels <- c("Sunday", "Monday", "Tuesday", "Wednesday",
                  "Thursday", "Friday", "Saturday")
 
-result <- raw %>%
-  mutate(
-    parsed_year               = substr(dateHourMinute, 1, 4),
-    parsed_month              = substr(dateHourMinute, 5, 6),
-    parsed_day                = substr(dateHourMinute, 7, 8),
-    parsed_hour               = substr(dateHourMinute, 9, 10),
-    parsed_minute             = substr(dateHourMinute, 11, 12),
-    parsed_year_month         = paste0(parsed_year, "-", parsed_month, "-01"),
-    parsed_year_month_day     = paste0(parsed_year, "-", parsed_month, "-", parsed_day),
-    parsed_year_month_day_hour = paste0(
-      parsed_year, "-", parsed_month, "-", parsed_day,
-      " ", parsed_hour, ":", parsed_minute, ":00"
-    ),
-    .dt                       = as.Date(parsed_year_month_day),
-    parsed_week               = as.integer(format(.dt, "%V")),
-    # %u: 1=Mon..7=Sun → 변환해서 1=Sun..7=Sat (lubridate wday 기본값과 동일)
-    parsed_wday               = as.integer(format(.dt, "%u")) %% 7L + 1L,
-    parsed_wday_label         = wday_labels[parsed_wday]
-  ) %>%
-  select(-.dt)
+result <- bind_rows(lapply(rows, function(r) {
+  dhm         <- r$dimensionValues[[1]]$value   # YYYYMMDDHHmm
+  active_users <- as.integer(r$metricValues[[1]]$value)
+  dt           <- as.Date(substr(dhm, 1, 8), "%Y%m%d")
+
+  list(
+    dateHourMinute            = dhm,
+    activeUsers               = active_users,
+    parsed_year               = substr(dhm, 1, 4),
+    parsed_month              = substr(dhm, 5, 6),
+    parsed_day                = substr(dhm, 7, 8),
+    parsed_hour               = substr(dhm, 9, 10),
+    parsed_minute             = substr(dhm, 11, 12),
+    parsed_year_month         = paste0(substr(dhm,1,4), "-", substr(dhm,5,6), "-01"),
+    parsed_year_month_day     = format(dt, "%Y-%m-%d"),
+    parsed_year_month_day_hour = paste0(format(dt, "%Y-%m-%d"), " ",
+                                        substr(dhm,9,10), ":", substr(dhm,11,12), ":00"),
+    parsed_week               = as.integer(format(dt, "%V")),
+    parsed_wday               = as.integer(format(dt, "%u")) %% 7L + 1L,
+    parsed_wday_label         = wday_labels[as.integer(format(dt, "%u")) %% 7L + 1L]
+  )
+}))
 
 # --- 저장 ---
 dir.create("output", showWarnings = FALSE)
 write_json(result, output_path, auto_unbox = TRUE, pretty = FALSE)
-
 message("Saved ", nrow(result), " rows to ", output_path)
