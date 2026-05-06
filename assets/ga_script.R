@@ -4,10 +4,10 @@ library(dplyr)
 library(gargle)
 
 # --- 인증 ---
-# WIF 크리덴셜은 external_account 타입으로 ga_auth(json_file=) 사용 불가.
-# gargle::token_fetch()는 GOOGLE_APPLICATION_CREDENTIALS의 모든 타입을 지원함.
+# WIF external_account 크리덴셜: gargle로 토큰 fetch 후 googleAnalyticsR에 직접 주입
+options(googleAuthR.scopes.selected = "https://www.googleapis.com/auth/analytics.readonly")
 token <- token_fetch(scopes = "https://www.googleapis.com/auth/analytics.readonly")
-googleAuthR::gar_auth(token = token)
+ga_auth(token = token)
 
 # --- 설정 ---
 property_id <- 267577482          # assets/email_account 2번째 줄
