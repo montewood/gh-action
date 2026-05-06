@@ -1,11 +1,13 @@
 library(googleAnalyticsR)
 library(jsonlite)
 library(dplyr)
+library(gargle)
 
 # --- 인증 ---
-# google-github-actions/auth@v2 가 GOOGLE_APPLICATION_CREDENTIALS 환경변수에
-# WIF 임시 토큰 파일 경로를 자동으로 설정함 (JSON 키 불필요)
-ga_auth(json_file = Sys.getenv("GOOGLE_APPLICATION_CREDENTIALS"))
+# WIF 크리덴셜은 external_account 타입으로 ga_auth(json_file=) 사용 불가.
+# gargle::token_fetch()는 GOOGLE_APPLICATION_CREDENTIALS의 모든 타입을 지원함.
+token <- token_fetch(scopes = "https://www.googleapis.com/auth/analytics.readonly")
+googleAuthR::gar_auth(token = token)
 
 # --- 설정 ---
 property_id <- 267577482          # assets/email_account 2번째 줄
