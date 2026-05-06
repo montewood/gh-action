@@ -1,0 +1,71 @@
+name: Daily Google Analytics Data Collection
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # UTC 02:00 = KST 11:00
+  workflow_dispatch:
+
+permissions:
+  id-token: write   # WIF OIDC 토큰 발급에 필요
+  contents: write   # output 파일 커밋에 필요
+
+jobs:
+  collect_ga_data:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud (Workload Identity Federation)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          # JSON 키 없이 OIDC 토큰으로 인증
+          # GOOGLE_APPLICATION_CREDENTIALS 환경변수에 임시 토큰 파일 경로가 자동 설정됨
+
+      - name: Setup R
+        uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: '4.4.2'
+
+      - name: Cache R packages
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.R_LIBS_USER }}
+          key: r-4.4.2-ga-${{ hashFiles('renv.lock') }}
+          restore-keys: r-4.4.2-ga-
+
+      - name: Install R packages
+        run: |
+          install.packages(
+            c("googleAnalyticsR", "jsonlite", "dplyr"),
+            repos = "https://cloud.r-project.org",
+            quiet = TRUE
+          )
+        shell: Rscript {0}
+
+      - name: Run GA collection script
+        run: Rscript assets/ga_script.R
+
+      - name: Commit and push output file
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+          YESTERDAY=$(date -d "yesterday" +%Y%m%d)
+          OUTPUT_FILE="output/GA-${YESTERDAY}.json"
+
+          if [ -f "$OUTPUT_FILE" ]; then
+            git add "$OUTPUT_FILE"
+            if ! git diff --cached --quiet; then
+              git commit -m "feat: add GA data ${YESTERDAY} [skip ci]"
+              git push
+            else
+              echo "Output file already up to date, nothing to commit."
+            fi
+          else
+            echo "Expected output file not found: $OUTPUT_FILE"
+            exit 1
+          fi
