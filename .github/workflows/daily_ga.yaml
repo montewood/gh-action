@@ -13,6 +13,9 @@ jobs:
   collect_ga_data:
     runs-on: ubuntu-latest
 
+    env:
+      RENV_CONFIG_AUTOLOADER_ENABLED: false  # renv 자동로더 비활성화
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -22,8 +25,6 @@ jobs:
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
-          # JSON 키 없이 OIDC 토큰으로 인증
-          # GOOGLE_APPLICATION_CREDENTIALS 환경변수에 임시 토큰 파일 경로가 자동 설정됨
 
       - name: Setup R
         uses: r-lib/actions/setup-r@v2
