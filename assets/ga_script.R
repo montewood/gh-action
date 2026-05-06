@@ -4,10 +4,20 @@ library(dplyr)
 library(gargle)
 
 # --- 인증 ---
-# WIF external_account 크리덴셜: gargle로 토큰 fetch 후 googleAnalyticsR에 직접 주입
-options(googleAuthR.scopes.selected = "https://www.googleapis.com/auth/analytics.readonly")
-token <- token_fetch(scopes = "https://www.googleapis.com/auth/analytics.readonly")
-ga_auth(token = token)
+# YAML auth step에서 WIF access_token을 직접 발급 -> GCP_ACCESS_TOKEN env var로 전달
+# httr Token2.0 객체로 래핑하여 googleAuthR에 주입 (non-interactive 환경에서 유일하게 신뢰할 수 있는 방법)
+access_token <- Sys.getenv("GCP_ACCESS_TOKEN")
+if (nchar(access_token) == 0) stop("GCP_ACCESS_TOKEN env var not set")
+
+tok <- httr::Token2.0$new(
+  app         = httr::oauth_app("google", key = "na", secret = "na"),
+  endpoint    = httr::oauth_endpoints("google"),
+  credentials = list(access_token = access_token, token_type = "Bearer"),
+  params      = list(as_header = TRUE,
+                     scope = "https://www.googleapis.com/auth/analytics.readonly"),
+  cache_path  = FALSE
+)
+googleAuthR::gar_auth(token = tok)
 
 # --- 설정 ---
 property_id <- 267577482          # assets/email_account 2번째 줄
