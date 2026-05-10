@@ -27,6 +27,18 @@ jobs:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
           token_format: 'access_token'
+          access_token_scopes: |
+            https://www.googleapis.com/auth/analytics.readonly
+
+      - name: Verify access token scope
+        run: |
+          set -euo pipefail
+          TOKEN_INFO=$(curl -s "https://www.googleapis.com/oauth2/v3/tokeninfo?access_token=${{ steps.auth.outputs.access_token }}")
+          echo "${TOKEN_INFO}" | grep -q "https://www.googleapis.com/auth/analytics.readonly" || {
+            echo "analytics.readonly scope missing in access token"
+            echo "${TOKEN_INFO}"
+            exit 1
+          }
 
       - name: Setup R
         uses: r-lib/actions/setup-r@v2
