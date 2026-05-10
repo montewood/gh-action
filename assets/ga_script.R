@@ -10,7 +10,8 @@ if (nchar(access_token) == 0) stop("GCP_ACCESS_TOKEN env var not set")
 
 # --- 설정 ---
 property_id <- 267577482
-target_date <- Sys.Date() - 1
+test_date_env <- Sys.getenv("TEST_DATE")
+target_date <- if (nchar(test_date_env) > 0) as.Date(test_date_env) else Sys.Date() - 1
 date_str    <- format(target_date, "%Y%m%d")
 output_path <- file.path("output", paste0("GA-", date_str, ".json"))
 
