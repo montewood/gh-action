@@ -87,6 +87,5 @@ jobs:
               echo "Output file already up to date, nothing to commit."
             fi
           else
-            echo "Expected output file not found: $OUTPUT_FILE"
-            exit 1
+            echo "No data file generated for ${YESTERDAY}; skipping commit."
           fi

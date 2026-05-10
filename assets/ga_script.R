@@ -41,10 +41,7 @@ if (http_error(resp)) {
 data <- content(resp, "parsed", encoding = "UTF-8")
 
 if (is.null(data$rows) || length(data$rows) == 0) {
-  message("No data returned for ", target_date, ". Writing empty array.")
-  dir.create("output", showWarnings = FALSE)
-  legacy_empty_payload <- toJSON(list(), auto_unbox = FALSE, pretty = TRUE)
-  write_json(list(legacy_empty_payload), output_path, auto_unbox = FALSE, pretty = FALSE)
+  message("No data returned for ", target_date, ". Skipping file write.")
   quit(status = 0)
 }
 
