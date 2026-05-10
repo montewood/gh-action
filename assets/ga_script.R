@@ -43,7 +43,8 @@ data <- content(resp, "parsed", encoding = "UTF-8")
 if (is.null(data$rows) || length(data$rows) == 0) {
   message("No data returned for ", target_date, ". Writing empty array.")
   dir.create("output", showWarnings = FALSE)
-  write(toJSON(list(), auto_unbox = FALSE), output_path)
+  legacy_empty_payload <- toJSON(list(), auto_unbox = FALSE, pretty = TRUE)
+  write_json(list(legacy_empty_payload), output_path, auto_unbox = FALSE, pretty = FALSE)
   quit(status = 0)
 }
 
@@ -77,5 +78,8 @@ result <- bind_rows(lapply(rows, function(r) {
 
 # --- 저장 ---
 dir.create("output", showWarnings = FALSE)
-write_json(result, output_path, auto_unbox = TRUE, pretty = FALSE)
+# Legacy compatibility: historical files store one pretty-printed JSON payload
+# as a single string element in a JSON array.
+legacy_payload <- toJSON(result, auto_unbox = TRUE, pretty = TRUE)
+write_json(list(legacy_payload), output_path, auto_unbox = FALSE, pretty = FALSE)
 message("Saved ", nrow(result), " rows to ", output_path)
