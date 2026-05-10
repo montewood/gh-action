@@ -39,7 +39,7 @@ vignettes/*.pdf
 # R Environment Variables
 .Renviron
 
-# pkgdown site
+# pkgdown site / 로컬 문서 (git 추적 제외)
 docs/
 
 # translation temp files
