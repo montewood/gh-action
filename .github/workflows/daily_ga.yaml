@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: '0 2 * * *'  # UTC 02:00 = KST 11:00
   workflow_dispatch:
+    inputs:
+      test_date:
+        description: '수집할 날짜 (YYYY-MM-DD). 비우면 어제.'
+        required: false
+        default: ''
 
 permissions:
   id-token: write   # WIF OIDC 토큰 발급에 필요
@@ -58,7 +63,7 @@ jobs:
       - name: Install R packages
         run: |
           Rscript -e '
-            pkgs <- c("httr", "jsonlite", "dplyr")
+            pkgs <- c("httr", "jsonlite")
             install.packages(pkgs, repos = "https://cloud.r-project.org", Ncpus = 2)
             missing <- pkgs[!sapply(pkgs, requireNamespace, quietly = TRUE)]
             if (length(missing) > 0) stop("Failed to install: ", paste(missing, collapse = ", "))
@@ -66,26 +71,42 @@ jobs:
           '
 
       - name: Run GA collection script
+        id: collect
         env:
           GCP_ACCESS_TOKEN: ${{ steps.auth.outputs.access_token }}
+          TEST_DATE: ${{ github.event.inputs.test_date }}
         run: Rscript assets/ga_script.R
 
       - name: Commit and push output file
+        env:
+          DATE_STR: ${{ steps.collect.outputs.date_str }}
+          ACTIVE_USERS: ${{ steps.collect.outputs.active_users }}
+          TOTAL_USERS: ${{ steps.collect.outputs.total_users }}
         run: |
+          set -euo pipefail
+
+          OUTPUT_FILE="output/GA-${DATE_STR}.json"
+
+          # 스크립트는 방문자가 0인 날에도 파일을 남긴다. 따라서 파일이 없다는 것은
+          # 수집이 실제로 실패했다는 뜻이다. 이걸 조용히 넘기던 이전 동작 때문에
+          # 2026-07-20부터 26일간 수집이 끊긴 채로 계속 성공 처리됐다.
+          if [ ! -f "$OUTPUT_FILE" ]; then
+            echo "::error::No data file generated for ${DATE_STR}"
+            exit 1
+          fi
+
+          if [ "${ACTIVE_USERS}" = "0" ]; then
+            echo "::warning::GA4 reported 0 active users for ${DATE_STR}. Verify the site still loads gtag.js."
+          fi
+          echo "\`${DATE_STR}\` activeUsers=${ACTIVE_USERS} totalUsers=${TOTAL_USERS}" >> "$GITHUB_STEP_SUMMARY"
+
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-          YESTERDAY=$(date -d "yesterday" +%Y%m%d)
-          OUTPUT_FILE="output/GA-${YESTERDAY}.json"
-
-          if [ -f "$OUTPUT_FILE" ]; then
-            git add "$OUTPUT_FILE"
-            if ! git diff --cached --quiet; then
-              git commit -m "feat: add GA data ${YESTERDAY} [skip ci]"
-              git push
-            else
-              echo "Output file already up to date, nothing to commit."
-            fi
+          git add "$OUTPUT_FILE"
+          if git diff --cached --quiet; then
+            echo "Output file already up to date, nothing to commit."
           else
-            echo "No data file generated for ${YESTERDAY}; skipping commit."
+            git commit -m "feat: add GA data ${DATE_STR} [skip ci]"
+            git push
           fi

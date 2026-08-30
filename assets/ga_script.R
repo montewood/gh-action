@@ -1,6 +1,5 @@
 library(httr)
 library(jsonlite)
-library(dplyr)
 
 # --- 인증 ---
 # YAML auth step(token_format: access_token)이 GCP_ACCESS_TOKEN env var로 전달
@@ -18,12 +17,13 @@ output_path <- file.path("output", paste0("GA-", date_str, ".json"))
 message("Collecting GA4 data for: ", target_date)
 
 # --- GA4 Data API v1beta runReport ---
+# 날짜 차원으로 조회해 하루치 고유 사용자 수를 그대로 받는다. 분 단위(dateHourMinute)
+# 응답을 합산하던 이전 방식은 같은 사용자가 여러 분에 걸쳐 활동하면 중복 계산됐다.
 body <- list(
   dateRanges = list(list(startDate = as.character(target_date),
                          endDate   = as.character(target_date))),
-  metrics    = list(list(name = "activeUsers")),
-  dimensions = list(list(name = "dateHourMinute")),
-  limit      = 100000
+  metrics    = list(list(name = "activeUsers"), list(name = "totalUsers")),
+  dimensions = list(list(name = "date"))
 )
 
 resp <- POST(
@@ -40,43 +40,48 @@ if (http_error(resp)) {
 
 data <- content(resp, "parsed", encoding = "UTF-8")
 
-if (is.null(data$rows) || length(data$rows) == 0) {
-  message("No data returned for ", target_date, ". Skipping file write.")
-  quit(status = 0)
+# --- 응답 파싱 ---
+metric_at <- function(row, index) {
+  value <- suppressWarnings(as.integer(row$metricValues[[index]]$value))
+  if (is.na(value)) 0L else value
 }
 
-# --- 응답 파싱 ---
-rows <- data$rows
-wday_labels <- c("Sunday", "Monday", "Tuesday", "Wednesday",
-                 "Thursday", "Friday", "Saturday")
+if (is.null(data$rows) || length(data$rows) == 0) {
+  active_users <- 0L
+  total_users  <- 0L
+} else {
+  row <- data$rows[[1]]
+  active_users <- metric_at(row, 1)
+  total_users  <- metric_at(row, 2)
+}
 
-result <- bind_rows(lapply(rows, function(r) {
-  dhm         <- r$dimensionValues[[1]]$value   # YYYYMMDDHHmm
-  active_users <- as.integer(r$metricValues[[1]]$value)
-  dt           <- as.Date(substr(dhm, 1, 8), "%Y%m%d")
-
-  list(
-    dateHourMinute            = dhm,
-    activeUsers               = active_users,
-    parsed_year               = substr(dhm, 1, 4),
-    parsed_month              = substr(dhm, 5, 6),
-    parsed_day                = substr(dhm, 7, 8),
-    parsed_hour               = substr(dhm, 9, 10),
-    parsed_minute             = substr(dhm, 11, 12),
-    parsed_year_month         = paste0(substr(dhm,1,4), "-", substr(dhm,5,6), "-01"),
-    parsed_year_month_day     = format(dt, "%Y-%m-%d"),
-    parsed_year_month_day_hour = paste0(format(dt, "%Y-%m-%d"), " ",
-                                        substr(dhm,9,10), ":", substr(dhm,11,12), ":00"),
-    parsed_week               = as.integer(format(dt, "%V")),
-    parsed_wday               = as.integer(format(dt, "%u")) %% 7L + 1L,
-    parsed_wday_label         = wday_labels[as.integer(format(dt, "%u")) %% 7L + 1L]
-  )
-}))
+payload <- list(
+  schemaVersion = 2L,
+  date          = format(target_date, "%Y-%m-%d"),
+  activeUsers   = active_users,
+  totalUsers    = total_users
+)
 
 # --- 저장 ---
-dir.create("output", showWarnings = FALSE)
-# Legacy compatibility: historical files store one pretty-printed JSON payload
-# as a single string element in a JSON array.
-legacy_payload <- toJSON(result, auto_unbox = TRUE, pretty = TRUE)
-write_json(list(legacy_payload), output_path, auto_unbox = FALSE, pretty = FALSE)
-message("Saved ", nrow(result), " rows to ", output_path)
+# 방문자가 0인 날도 파일을 남긴다. 파일 부재를 정상으로 취급하던 이전 동작이
+# 2026-07-20부터 26일간의 수집 중단을 성공으로 보이게 만들었다.
+#
+# 다만 이미 있는 파일을 0으로 덮어쓰지는 않는다. GA4 기본 이벤트 보존기간이
+# 2개월이라 오래된 날짜를 백필하면 실제 방문이 있었더라도 0이 돌아온다.
+if (active_users == 0L && total_users == 0L && file.exists(output_path)) {
+  message("Refusing to overwrite existing ", output_path, " with a zero result.")
+} else {
+  dir.create("output", showWarnings = FALSE)
+  write_json(payload, output_path, auto_unbox = TRUE, pretty = TRUE)
+  message("Saved activeUsers=", active_users, " totalUsers=", total_users,
+          " to ", output_path)
+}
+
+# 워크플로가 0 방문 경고를 띄울 수 있도록 결과를 넘긴다.
+github_output <- Sys.getenv("GITHUB_OUTPUT")
+if (nchar(github_output) > 0) {
+  write(c(paste0("active_users=", active_users),
+          paste0("total_users=", total_users),
+          paste0("date_str=", date_str)),
+        file = github_output, append = TRUE)
+}
